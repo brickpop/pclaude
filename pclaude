@@ -5,11 +5,9 @@
 # options are namespaced with --pclaude-* so they can never collide.
 set -euo pipefail
 
-# Fully qualified so Podman resolves these locally instead of querying registries.
-IMAGE="${PCLAUDE_IMAGE:-localhost/pclaude:latest}"
-BASE_IMAGE="localhost/pclaude:latest"
+# Fully qualified so Podman resolves this locally instead of querying registries.
+IMAGE="${PCLAUDE_IMAGE:-localhost/pclaude}"
 SHARE="${PCLAUDE_HOME:-${XDG_DATA_HOME:-$HOME/.local/share}/pclaude}"
-DOCKERFILE="Dockerfile"
 MODE="run"
 
 die() { printf 'pclaude: %s\n' "$*" >&2; exit 1; }
@@ -23,47 +21,32 @@ Everything that is not a --pclaude-* option goes to Claude Code untouched:
   pclaude -p "fix the tests"    Print mode
   pclaude --model opus mcp list Any claude flag or subcommand
 
-Launcher options (must come before the claude args):
-  --pclaude-dev         Use the batteries-included image (Foundry/Deno/Bun/Go)
-  --pclaude-build       Build the base image
-  --pclaude-build-dev   Build the dev image (base image must exist)
-  --pclaude-update      Rebuild the selected image from scratch (--pull --no-cache)
-  --pclaude-shell       Open a shell in the container instead of Claude
-  --pclaude-help        This message
+Launcher options (before the claude args):
+  --pclaude-build    Build the image
+  --pclaude-update   Rebuild it from scratch (--pull --no-cache)
+  --pclaude-shell    Open a shell in the container instead of Claude
+  --pclaude-help     This message
 
 Environment:
-  PCLAUDE_IMAGE     Image name             (default: localhost/pclaude:latest,
-                                            or localhost/pclaude:dev)
-  PCLAUDE_HOME      Dir holding Dockerfiles(default: ~/.local/share/pclaude)
+  PCLAUDE_IMAGE     Image name             (default: localhost/pclaude)
+  PCLAUDE_HOME      Dir holding Dockerfile (default: ~/.local/share/pclaude)
   PCLAUDE_ARGS      Extra podman run args  (e.g. "-v /data:/data:z -e FOO=bar")
   PCLAUDE_NO_YOLO   Set to 1 to drop --dangerously-skip-permissions
   PCLAUDE_RELABEL   SELinux mount label: auto (default), z, Z or off
 EOF
 }
 
-use_dev() {
-  DOCKERFILE="Dockerfile.dev"
-  [ -n "${PCLAUDE_IMAGE:-}" ] || IMAGE="localhost/pclaude:dev"
-}
-
 build_image() {
-  [ -f "$SHARE/$DOCKERFILE" ] || die "no $DOCKERFILE in $SHARE — re-run install.sh from the repo"
-  # Dockerfile.dev builds FROM the base image; reuse it if it is already there.
-  if [ "$DOCKERFILE" = "Dockerfile.dev" ] && ! podman image exists "$BASE_IMAGE"; then
-    echo "pclaude: base image $BASE_IMAGE missing, building it first..." >&2
-    podman build -f "$SHARE/Dockerfile" -t "$BASE_IMAGE" "$SHARE"
-  fi
-  podman build -f "$SHARE/$DOCKERFILE" -t "$IMAGE" "$@" "$SHARE"
+  [ -f "$SHARE/Dockerfile" ] || die "no Dockerfile in $SHARE — re-run install.sh from the repo"
+  podman build -t "$IMAGE" "$@" "$SHARE"
 }
 
 while [ $# -gt 0 ]; do
   case "$1" in
-    --pclaude-help)      usage; exit 0 ;;
-    --pclaude-dev)       use_dev; shift ;;
-    --pclaude-build)     MODE="build"; shift ;;
-    --pclaude-build-dev) use_dev; MODE="build"; shift ;;
-    --pclaude-update)    MODE="update"; shift ;;
-    --pclaude-shell)     MODE="shell"; shift ;;
+    --pclaude-help)   usage; exit 0 ;;
+    --pclaude-build)  MODE="build"; shift ;;
+    --pclaude-update) MODE="update"; shift ;;
+    --pclaude-shell)  MODE="shell"; shift ;;
     *) break ;;
   esac
 done

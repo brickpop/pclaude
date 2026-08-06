@@ -1,7 +1,5 @@
 FROM docker.io/library/node:22-slim
 
-ARG CLAUDE_CODE_VERSION=latest
-
 RUN apt-get update && apt-get install -y --no-install-recommends \
       ca-certificates \
       curl \
@@ -16,8 +14,23 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       procps \
   && rm -rf /var/lib/apt/lists/*
 
+# Go, pinned via build arg or resolved at build time with "latest".
+ARG GO_VERSION=latest
+RUN set -eux; \
+    arch="$(dpkg --print-architecture)"; \
+    ver="$GO_VERSION"; \
+    if [ "$ver" = "latest" ]; then ver="$(curl -fsSL https://go.dev/VERSION?m=text | head -n1)"; fi; \
+    case "$ver" in go*) ;; *) ver="go$ver" ;; esac; \
+    curl -fsSL "https://go.dev/dl/${ver}.linux-${arch}.tar.gz" -o /tmp/go.tgz; \
+    tar -C /usr/local -xzf /tmp/go.tgz; \
+    rm /tmp/go.tgz /usr/local/go/test /usr/local/go/api -rf; \
+    /usr/local/go/bin/go version
+
 ENV NPM_CONFIG_PREFIX=/usr/local/share/npm-global \
-    PATH=/usr/local/share/npm-global/bin:$PATH \
+    GOPATH=/home/node/go \
+    DENO_INSTALL=/home/node/.deno \
+    BUN_INSTALL=/home/node/.bun \
+    PATH=/usr/local/share/npm-global/bin:/usr/local/go/bin:/home/node/go/bin:/home/node/.foundry/bin:/home/node/.deno/bin:/home/node/.bun/bin:$PATH \
     DEVCONTAINER=true
 
 RUN mkdir -p /usr/local/share/npm-global /home/node/.claude \
@@ -25,10 +38,26 @@ RUN mkdir -p /usr/local/share/npm-global /home/node/.claude \
 
 USER node
 
+RUN curl -fsSL https://bun.sh/install | bash
+RUN curl -fsSL https://deno.land/install.sh | sh -s -- -y
+
+# Foundry (forge, cast, anvil, chisel). foundryup keeps a second copy of every
+# binary under versions/; hardlinking them together saves ~220 MB.
+RUN curl -fsSL https://foundry.paradigm.xyz | bash \
+  && /home/node/.foundry/bin/foundryup \
+  && for f in /home/node/.foundry/versions/*/*; do \
+       if [ -f "$f" ]; then ln -f "$f" "/home/node/.foundry/bin/$(basename "$f")"; fi; \
+     done
+
+# Last, because it moves fastest: a version bump reuses every layer above.
+ARG CLAUDE_CODE_VERSION=latest
 RUN npm install -g @anthropic-ai/claude-code@${CLAUDE_CODE_VERSION} \
   && npm cache clean --force
+
+RUN forge --version && deno --version && bun --version && go version && claude --version
 
 # The command is exactly what you pass, and defaults to Claude.
 # pclaude bind-mounts each project at its host path and passes a matching --workdir.
 ENTRYPOINT []
 CMD ["claude"]
+

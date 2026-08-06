@@ -27,10 +27,10 @@ brew install podman && podman machine init && podman machine start   # macOS
 ```sh
 git clone https://github.com/brickpop/pclaude.git
 cd pclaude
-./install.sh          # add --dev to also build the Foundry/Deno/Bun/Go image
+./install.sh
 ```
 
-This copies `pclaude` to `~/.local/bin`, the Dockerfiles to `~/.local/share/pclaude`,
+This copies `pclaude` to `~/.local/bin`, the Dockerfile to `~/.local/share/pclaude`,
 and builds the image (a few minutes).
 
 If `~/.local/bin` is not on your `PATH`:
@@ -58,10 +58,8 @@ The launcher's own options are namespaced so they can never clash with a Claude 
 
 | Option | |
 |---|---|
-| `--pclaude-build` | Build the base image |
-| `--pclaude-build-dev` | Build the dev image (Foundry, Deno, Bun, Go) |
-| `--pclaude-dev` | Run using the dev image |
-| `--pclaude-update` | Rebuild from scratch, pulling the latest base and Claude Code |
+| `--pclaude-build` | Build the image |
+| `--pclaude-update` | Rebuild it from scratch, pulling the latest base and Claude Code |
 | `--pclaude-shell` | Open a shell in the container instead of Claude |
 | `--pclaude-help` | Usage |
 
@@ -71,9 +69,9 @@ The image sets `claude` as its `CMD` and clears the entrypoint, so Claude is onl
 default — any command in the image can replace it, with no `--entrypoint` needed:
 
 ```sh
-podman run --rm -it -v $PWD:$PWD:z -w $PWD localhost/pclaude:latest        # claude
-podman run --rm -it -v $PWD:$PWD:z -w $PWD localhost/pclaude:latest bash   # a shell
-podman run --rm -v $PWD:$PWD:z -w $PWD localhost/pclaude:dev forge test    # anything else
+podman run --rm -it -v $PWD:$PWD:z -w $PWD localhost/pclaude        # claude
+podman run --rm -it -v $PWD:$PWD:z -w $PWD localhost/pclaude bash   # a shell
+podman run --rm -v $PWD:$PWD:z -w $PWD localhost/pclaude forge test # anything else
 ```
 
 `pclaude --pclaude-shell` is just the shorthand for the second one, with all the usual
@@ -114,8 +112,8 @@ To undo the relabelling of a directory later: `restorecon -R <dir>`.
 
 | Variable | Default | |
 |---|---|---|
-| `PCLAUDE_IMAGE` | `localhost/pclaude:latest` | image to run (`:dev` with `--pclaude-dev`) |
-| `PCLAUDE_HOME` | `~/.local/share/pclaude` | where the Dockerfiles live |
+| `PCLAUDE_IMAGE` | `localhost/pclaude` | image to run |
+| `PCLAUDE_HOME` | `~/.local/share/pclaude` | where the Dockerfile lives |
 | `PCLAUDE_ARGS` | — | extra `podman run` args |
 | `PCLAUDE_NO_YOLO` | — | `1` restores Claude's permission prompts |
 | `PCLAUDE_RELABEL` | `auto` | `z`, `Z` or `off` |
@@ -133,31 +131,34 @@ Forward your SSH agent, so Claude can push:
 PCLAUDE_ARGS="-v $SSH_AUTH_SOCK:/ssh-agent:z -e SSH_AUTH_SOCK=/ssh-agent" pclaude
 ```
 
-## Images
+## What's in the image
 
-Two tags of the same image:
+One image, `localhost/pclaude`, built from `node:22-slim`. Everything is on `PATH`, so
+Claude can reach for any of it:
 
-**`localhost/pclaude:latest`** (`Dockerfile`) — `node:22-slim` plus Claude Code, git,
-openssh, curl, jq, make, unzip, fzf, vim, less. Node 22 and npm come from the base image.
+| | |
+|---|---|
+| **Node** | node, npm — from the base image |
+| **Bun** | bun |
+| **Deno** | deno |
+| **Foundry** | forge, cast, anvil, chisel |
+| **Go** | go, with `GOPATH=/home/node/go` |
+| **Claude Code** | claude |
+| **Shell tools** | git, openssh, curl, jq, make, unzip, fzf, vim, less, ps |
 
-**`localhost/pclaude:dev`** (`Dockerfile.dev`) — everything above plus Foundry (`forge`,
-`cast`, `anvil`), Deno, Bun and Go. It is layered `FROM localhost/pclaude:latest`, so it
-reuses the base image you already have and only adds the toolchains on top.
+That comes to about 1.3 GB, of which Claude Code's own binary is 277 MB and Node is
+119 MB. The first build takes a few minutes; after that it is cached.
 
-```sh
-pclaude --pclaude-build-dev
-pclaude --pclaude-dev
-```
-
-Pin a Claude Code version, or a Go version, at build time:
+Pin a version at build time:
 
 ```sh
 pclaude --pclaude-build --build-arg CLAUDE_CODE_VERSION=2.1.223
-pclaude --pclaude-build-dev --build-arg GO_VERSION=1.24.5
+pclaude --pclaude-build --build-arg GO_VERSION=1.24.5
 ```
 
 Claude Code self-updates inside a running container, but the change is lost when it
 exits. Run `pclaude --pclaude-update` now and then to bake in the current release.
+Claude Code installs last in the `Dockerfile`, so bumping it reuses the toolchain layers.
 
 ## Uninstall
 
