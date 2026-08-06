@@ -1,0 +1,50 @@
+# Optional "batteries included" image: Foundry, Deno, Bun and Go layered on top
+# of the base pclaude image, which must exist first.
+#   pclaude --pclaude-build-dev
+#   (or: podman build -f Dockerfile.dev -t localhost/pclaude:dev .)
+# Run it with:
+#   pclaude --pclaude-dev
+ARG BASE_IMAGE=localhost/pclaude:latest
+FROM ${BASE_IMAGE}
+
+USER root
+
+# Go — pinned via build arg, or "latest" to resolve at build time.
+ARG GO_VERSION=latest
+RUN set -eux; \
+    arch="$(dpkg --print-architecture)"; \
+    ver="$GO_VERSION"; \
+    if [ "$ver" = "latest" ]; then ver="$(curl -fsSL https://go.dev/VERSION?m=text | head -n1)"; fi; \
+    case "$ver" in go*) ;; *) ver="go$ver" ;; esac; \
+    curl -fsSL "https://go.dev/dl/${ver}.linux-${arch}.tar.gz" -o /tmp/go.tgz; \
+    tar -C /usr/local -xzf /tmp/go.tgz; \
+    rm /tmp/go.tgz; \
+    rm -rf /usr/local/go/test /usr/local/go/api; \
+    /usr/local/go/bin/go version
+
+USER node
+
+ENV PATH=/usr/local/go/bin:/home/node/go/bin:/home/node/.foundry/bin:/home/node/.deno/bin:/home/node/.bun/bin:$PATH \
+    GOPATH=/home/node/go \
+    DENO_INSTALL=/home/node/.deno \
+    BUN_INSTALL=/home/node/.bun
+
+# Foundry (forge, cast, anvil, chisel). foundryup leaves a second full copy of
+# every binary under versions/, so hardlink them back together (~220 MB).
+RUN curl -fsSL https://foundry.paradigm.xyz | bash \
+  && /home/node/.foundry/bin/foundryup \
+  && for f in /home/node/.foundry/versions/*/*; do \
+       if [ -f "$f" ]; then ln -f "$f" "/home/node/.foundry/bin/$(basename "$f")"; fi; \
+     done
+
+# Deno
+RUN curl -fsSL https://deno.land/install.sh | sh -s -- -y
+
+# Bun
+RUN curl -fsSL https://bun.sh/install | bash
+
+RUN forge --version && deno --version && bun --version && go version
+
+WORKDIR /workspace
+
+CMD ["claude"]

@@ -1,0 +1,141 @@
+#!/usr/bin/env bash
+# pclaude — run Claude Code inside a Podman container, scoped to the current directory.
+#
+# Every argument is passed straight through to `claude`. The launcher's own
+# options are namespaced with --pclaude-* so they can never collide.
+set -euo pipefail
+
+# Fully qualified on purpose: a bare "pclaude:dev" would send Podman to the
+# configured registries whenever the image is missing locally.
+IMAGE="${PCLAUDE_IMAGE:-localhost/pclaude:latest}"
+BASE_IMAGE="localhost/pclaude:latest"
+SHARE="${PCLAUDE_HOME:-${XDG_DATA_HOME:-$HOME/.local/share}/pclaude}"
+DOCKERFILE="Dockerfile"
+MODE="run"
+
+die() { printf 'pclaude: %s\n' "$*" >&2; exit 1; }
+
+usage() {
+  cat <<'EOF'
+Usage: pclaude [--pclaude-*] [claude args...]
+
+Everything that is not a --pclaude-* option goes to Claude Code untouched:
+  pclaude                       Interactive session in the current directory
+  pclaude -p "fix the tests"    Print mode
+  pclaude --model opus mcp list Any claude flag or subcommand
+
+Launcher options (must come before the claude args):
+  --pclaude-dev         Use the batteries-included image (Foundry/Deno/Bun/Go)
+  --pclaude-build       Build the base image
+  --pclaude-build-dev   Build the dev image (base image must exist)
+  --pclaude-update      Rebuild the selected image from scratch (--pull --no-cache)
+  --pclaude-shell       Open a shell in the container instead of Claude
+  --pclaude-help        This message
+
+Environment:
+  PCLAUDE_IMAGE     Image name             (default: localhost/pclaude:latest,
+                                            or localhost/pclaude:dev)
+  PCLAUDE_HOME      Dir holding Dockerfiles(default: ~/.local/share/pclaude)
+  PCLAUDE_ARGS      Extra podman run args  (e.g. "-v /data:/data:z -e FOO=bar")
+  PCLAUDE_NO_YOLO   Set to 1 to drop --dangerously-skip-permissions
+  PCLAUDE_RELABEL   SELinux mount label: auto (default), z, Z or off
+EOF
+}
+
+use_dev() {
+  DOCKERFILE="Dockerfile.dev"
+  [ -n "${PCLAUDE_IMAGE:-}" ] || IMAGE="localhost/pclaude:dev"
+}
+
+build_image() {
+  [ -f "$SHARE/$DOCKERFILE" ] || die "no $DOCKERFILE in $SHARE — re-run install.sh from the repo"
+  # Dockerfile.dev builds FROM the base image; reuse it if it is already there.
+  if [ "$DOCKERFILE" = "Dockerfile.dev" ] && ! podman image exists "$BASE_IMAGE"; then
+    echo "pclaude: base image $BASE_IMAGE missing, building it first..." >&2
+    podman build -f "$SHARE/Dockerfile" -t "$BASE_IMAGE" "$SHARE"
+  fi
+  podman build -f "$SHARE/$DOCKERFILE" -t "$IMAGE" "$@" "$SHARE"
+}
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --pclaude-help)      usage; exit 0 ;;
+    --pclaude-dev)       use_dev; shift ;;
+    --pclaude-build)     MODE="build"; shift ;;
+    --pclaude-build-dev) use_dev; MODE="build"; shift ;;
+    --pclaude-update)    MODE="update"; shift ;;
+    --pclaude-shell)     MODE="shell"; shift ;;
+    *) break ;;
+  esac
+done
+
+case "$MODE" in
+  build)  build_image "$@"; exit 0 ;;
+  update) build_image --pull --no-cache "$@"; exit 0 ;;
+esac
+
+if ! podman image exists "$IMAGE"; then
+  echo "pclaude: image $IMAGE not found, building it once..." >&2
+  build_image
+fi
+
+# Guard against relabelling / exposing an entire home directory by accident.
+case "$PWD" in
+  /) die "refusing to run in /" ;;
+  "$HOME") [ "${PCLAUDE_ALLOW_HOME:-}" = 1 ] || die "refusing to mount all of \$HOME (set PCLAUDE_ALLOW_HOME=1 to override)" ;;
+esac
+
+# Claude Code stores its state here; create both so Podman doesn't make them dirs.
+mkdir -p "$HOME/.claude"
+[ -e "$HOME/.claude.json" ] || echo '{}' > "$HOME/.claude.json"
+
+# Bind mounts only need an SELinux relabel suffix on SELinux hosts (Fedora,
+# RHEL, CentOS...); elsewhere it is meaningless. Default to the shared label
+# "z" rather than the private "Z": with "Z" every run stamps a container-private
+# MCS category on ~/.claude, so a second concurrent session locks out the first.
+#   PCLAUDE_RELABEL=z    shared label  (default on SELinux)
+#   PCLAUDE_RELABEL=Z    private label (stricter, breaks concurrent sessions)
+#   PCLAUDE_RELABEL=off  no relabelling
+relabel="${PCLAUDE_RELABEL:-auto}"
+if [ "$relabel" = auto ]; then
+  if [ -f /sys/fs/selinux/enforce ]; then relabel=z; else relabel=off; fi
+fi
+case "$relabel" in
+  z|Z) Z="$relabel" ;;
+  off) Z="" ;;
+  *)   die "PCLAUDE_RELABEL must be z, Z, off or auto" ;;
+esac
+
+args=(
+  --rm --interactive --tty
+  --hostname pclaude
+  --userns "keep-id:uid=1000,gid=1000"
+  --volume "$PWD:/workspace${Z:+:$Z}"
+  --volume "$HOME/.claude:/home/node/.claude${Z:+:$Z}"
+  --volume "$HOME/.claude.json:/home/node/.claude.json${Z:+:$Z}"
+)
+
+if [ -f "$HOME/.gitconfig" ]; then
+  args+=(--volume "$HOME/.gitconfig:/home/node/.gitconfig:ro${Z:+,$Z}")
+fi
+
+for var in ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN ANTHROPIC_BASE_URL ANTHROPIC_MODEL \
+           CLAUDE_CODE_USE_BEDROCK CLAUDE_CODE_USE_VERTEX GH_TOKEN TERM COLORTERM; do
+  if [ -n "${!var-}" ]; then args+=(--env "$var=${!var}"); fi
+done
+
+# Word-split PCLAUDE_ARGS the way a shell would.
+if [ -n "${PCLAUDE_ARGS:-}" ]; then
+  read -r -a extra <<<"$PCLAUDE_ARGS"
+  args+=("${extra[@]}")
+fi
+
+# The image uses CMD, not ENTRYPOINT, so the command is named explicitly here
+# and anything else can be run in the container just as easily.
+if [ "$MODE" = "shell" ]; then
+  exec podman run "${args[@]}" "$IMAGE" bash "$@"
+fi
+
+[ "${PCLAUDE_NO_YOLO:-}" = 1 ] || set -- --dangerously-skip-permissions "$@"
+
+exec podman run "${args[@]}" "$IMAGE" claude "$@"

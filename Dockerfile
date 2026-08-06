@@ -1,49 +1,47 @@
-FROM node:22
+FROM docker.io/library/node:22-slim
 
 ARG CLAUDE_CODE_VERSION=latest
 
-# Install basic development tools
+# Everyday CLI tools. Deliberately no sudo / iptables / man-db / build-essential:
+# add what you need in Dockerfile.dev instead of growing this one.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-  git \
-  procps \
-  sudo \
-  fzf \
-  man-db \
-  unzip \
-  gnupg2 \
-  gh \
-  iptables \
-  iproute2 \
-  dnsutils \
-  aggregate \
-  jq \
-  make \
-  vim \
-  && apt-get clean && rm -rf /var/lib/apt/lists/*
+      ca-certificates \
+      curl \
+      git \
+      openssh-client \
+      less \
+      jq \
+      make \
+      unzip \
+      fzf \
+      vim \
+      procps \
+  && rm -rf /var/lib/apt/lists/*
 
-# Ensure default node user has access to /usr/local/share
-RUN mkdir -p /usr/local/share/npm-global && \
-  chown -R node:node /usr/local/share
+# Do NOT set CLAUDE_CONFIG_DIR here. Claude resolves .claude.json *inside* it, so
+# pointing it at ~/.claude makes it read ~/.claude/.claude.json and ignore the
+# mounted ~/.claude.json, losing your login. HOME=/home/node already gives the
+# right default of /home/node/.claude.
+ENV NPM_CONFIG_PREFIX=/usr/local/share/npm-global \
+    PATH=/usr/local/share/npm-global/bin:$PATH \
+    DEVCONTAINER=true
 
-# Set `DEVCONTAINER` environment variable to help with orientation
-ENV DEVCONTAINER=true
+RUN mkdir -p /usr/local/share/npm-global /workspace /home/node/.claude \
+  && chown -R node:node /usr/local/share/npm-global /workspace /home/node/.claude
 
-# Create workspace and config directories and set permissions
-RUN mkdir -p /workspace /home/node/.claude && \
-  chown -R node:node /workspace /home/node/.claude
+USER node
 
-RUN curl -L https://getfoundry.sh/install | bash
+RUN npm install -g @anthropic-ai/claude-code@${CLAUDE_CODE_VERSION} \
+  && npm cache clean --force
 
 WORKDIR /workspace
 
-# Set up non-root user
-USER node
+# Drop the node image's docker-entrypoint.sh, which silently rewrites any
+# argument starting with "-" into a `node` invocation. With no entrypoint, the
+# command is exactly what you pass...
+ENTRYPOINT []
 
-# Install global packages
-ENV NPM_CONFIG_PREFIX=/usr/local/share/npm-global
-ENV PATH=$PATH:/usr/local/share/npm-global/bin:/home/node/.foundry/bin
-
-# Install Claude
-RUN npm install -g @anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}
-
-CMD ["claude", "--dangerously-skip-permissions"]
+# ...and defaults to Claude when you pass nothing:
+#   podman run <image>              claude
+#   podman run <image> bash         a shell, no --entrypoint needed
+CMD ["claude"]
