@@ -29,8 +29,8 @@ ENV PATH=/usr/local/go/bin:/home/node/go/bin:/home/node/.foundry/bin:/home/node/
     DENO_INSTALL=/home/node/.deno \
     BUN_INSTALL=/home/node/.bun
 
-# Foundry (forge, cast, anvil, chisel). foundryup leaves a second full copy of
-# every binary under versions/, so hardlink them back together (~220 MB).
+# Foundry (forge, cast, anvil, chisel). foundryup keeps a second copy of every
+# binary under versions/; hardlinking them together saves ~220 MB.
 RUN curl -fsSL https://foundry.paradigm.xyz | bash \
   && /home/node/.foundry/bin/foundryup \
   && for f in /home/node/.foundry/versions/*/*; do \
@@ -44,7 +44,5 @@ RUN curl -fsSL https://deno.land/install.sh | sh -s -- -y
 RUN curl -fsSL https://bun.sh/install | bash
 
 RUN forge --version && deno --version && bun --version && go version
-
-WORKDIR /workspace
 
 CMD ["claude"]

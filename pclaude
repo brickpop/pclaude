@@ -5,8 +5,7 @@
 # options are namespaced with --pclaude-* so they can never collide.
 set -euo pipefail
 
-# Fully qualified on purpose: a bare "pclaude:dev" would send Podman to the
-# configured registries whenever the image is missing locally.
+# Fully qualified so Podman resolves these locally instead of querying registries.
 IMAGE="${PCLAUDE_IMAGE:-localhost/pclaude:latest}"
 BASE_IMAGE="localhost/pclaude:latest"
 SHARE="${PCLAUDE_HOME:-${XDG_DATA_HOME:-$HOME/.local/share}/pclaude}"
@@ -89,13 +88,10 @@ esac
 mkdir -p "$HOME/.claude"
 [ -e "$HOME/.claude.json" ] || echo '{}' > "$HOME/.claude.json"
 
-# Bind mounts only need an SELinux relabel suffix on SELinux hosts (Fedora,
-# RHEL, CentOS...); elsewhere it is meaningless. Default to the shared label
-# "z" rather than the private "Z": with "Z" every run stamps a container-private
-# MCS category on ~/.claude, so a second concurrent session locks out the first.
-#   PCLAUDE_RELABEL=z    shared label  (default on SELinux)
-#   PCLAUDE_RELABEL=Z    private label (stricter, breaks concurrent sessions)
-#   PCLAUDE_RELABEL=off  no relabelling
+# SELinux hosts (Fedora, RHEL...) need a relabel suffix on bind mounts:
+#   PCLAUDE_RELABEL=z    shared label, lets concurrent sessions share ~/.claude
+#   PCLAUDE_RELABEL=Z    private label, stricter, for one session at a time
+#   PCLAUDE_RELABEL=off  plain bind mounts
 relabel="${PCLAUDE_RELABEL:-auto}"
 if [ "$relabel" = auto ]; then
   if [ -f /sys/fs/selinux/enforce ]; then relabel=z; else relabel=off; fi
@@ -106,11 +102,14 @@ case "$relabel" in
   *)   die "PCLAUDE_RELABEL must be z, Z, off or auto" ;;
 esac
 
+# The project keeps its host path inside the container, so Claude's per-project
+# session history is keyed the same way it is on the host.
 args=(
   --rm --interactive --tty
   --hostname pclaude
   --userns "keep-id:uid=1000,gid=1000"
-  --volume "$PWD:/workspace${Z:+:$Z}"
+  --volume "$PWD:$PWD${Z:+:$Z}"
+  --workdir "$PWD"
   --volume "$HOME/.claude:/home/node/.claude${Z:+:$Z}"
   --volume "$HOME/.claude.json:/home/node/.claude.json${Z:+:$Z}"
 )
@@ -130,8 +129,7 @@ if [ -n "${PCLAUDE_ARGS:-}" ]; then
   args+=("${extra[@]}")
 fi
 
-# The image uses CMD, not ENTRYPOINT, so the command is named explicitly here
-# and anything else can be run in the container just as easily.
+# Name the command explicitly, so any other one can replace it.
 if [ "$MODE" = "shell" ]; then
   exec podman run "${args[@]}" "$IMAGE" bash "$@"
 fi

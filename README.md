@@ -71,9 +71,9 @@ The image sets `claude` as its `CMD` and clears the entrypoint, so Claude is onl
 default — any command in the image can replace it, with no `--entrypoint` needed:
 
 ```sh
-podman run --rm -it -v $PWD:/workspace:z localhost/pclaude:latest        # claude
-podman run --rm -it -v $PWD:/workspace:z localhost/pclaude:latest bash   # a shell
-podman run --rm -v $PWD:/workspace:z localhost/pclaude:dev forge test    # anything else
+podman run --rm -it -v $PWD:$PWD:z -w $PWD localhost/pclaude:latest        # claude
+podman run --rm -it -v $PWD:$PWD:z -w $PWD localhost/pclaude:latest bash   # a shell
+podman run --rm -v $PWD:$PWD:z -w $PWD localhost/pclaude:dev forge test    # anything else
 ```
 
 `pclaude --pclaude-shell` is just the shorthand for the second one, with all the usual
@@ -83,7 +83,7 @@ mounts applied.
 
 | Host | Container | |
 |---|---|---|
-| `$PWD` | `/workspace` | read-write — the only project code Claude can reach |
+| `$PWD` | `$PWD` (same path) | read-write — the only project code Claude can reach |
 | `~/.claude` | `/home/node/.claude` | credentials, settings, agents, history |
 | `~/.claude.json` | `/home/node/.claude.json` | project state |
 | `~/.gitconfig` | `/home/node/.gitconfig` | read-only, if present |
@@ -91,6 +91,11 @@ mounts applied.
 `ANTHROPIC_API_KEY`, `ANTHROPIC_BASE_URL`, `GH_TOKEN` and friends are forwarded when set.
 Nothing else from your machine is visible. Running in `$HOME` itself is refused (it would
 defeat the point); set `PCLAUDE_ALLOW_HOME=1` if you really mean it.
+
+The project keeps its host path inside the container, and `HOME` stays `/home/node`.
+Claude keys per-project session history off the working directory, so each repo gets its
+own history and `pclaude --continue` picks up where `claude --continue` left off in that
+same repo.
 
 Note that the container has **unrestricted network access** — the sandbox is about your
 filesystem, not about what Claude can reach online.
