@@ -43,6 +43,22 @@ echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.bashrc      # bash/zsh
 **3. Log in**, once, on the first run: `pclaude` and follow the browser prompt. The
 credentials land in `~/.claude` on the host, so they survive image rebuilds.
 
+> **macOS**: on macOS the direct `pclaude` → `/login` flow can hang on the paste step —
+> bracketed-paste escape sequences leak through the nested TTYs (host terminal → podman
+> machine → container) and mangle the OAuth code, so Enter appears to do nothing the
+> first time and reports an invalid code the second. Log in from a container shell
+> instead, which routes the paste cleanly:
+>
+> ```sh
+> pclaude --pclaude-shell
+> claude /login         # paste the code here — this TTY path handles it correctly
+> exit
+> ```
+>
+> The credentials land in the mounted `~/.claude` and every subsequent `pclaude` picks
+> them up. Native `claude` on the host is unaffected (it uses the macOS Keychain and
+> coexists with the file-based credentials the container writes).
+
 ## Usage
 
 Arguments are passed through to `claude` untouched:

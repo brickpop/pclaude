@@ -71,6 +71,33 @@ esac
 mkdir -p "$HOME/.claude"
 [ -e "$HOME/.claude.json" ] || echo '{}' > "$HOME/.claude.json"
 
+# On macOS, /login run directly from a pclaude session gets mangled at the paste
+# step — bracketed-paste escape sequences leak through the nested TTYs (host
+# terminal → podman machine → container) and corrupt the OAuth code. Detect the
+# not-yet-logged-in case and steer the user to the shell path, which routes paste
+# cleanly. Bypass by running --pclaude-shell yourself.
+if [ "$MODE" = "run" ] \
+   && [ "$(uname -s)" = "Darwin" ] \
+   && [ ! -s "$HOME/.claude/.credentials.json" ]; then
+  cat >&2 <<'EOF'
+pclaude: no credentials in ~/.claude yet — first-time login on macOS needs the shell path.
+
+Direct /login from pclaude gets stuck at the paste step on macOS: bracketed-paste
+escape sequences leak through the nested TTYs and mangle the OAuth code, so Enter
+appears to do nothing the first time and reports an invalid code the second.
+
+Log in from a container shell instead, then rerun pclaude:
+
+  pclaude --pclaude-shell
+  claude /login       # paste the code here — this TTY path handles it cleanly
+  exit
+  pclaude             # you are in
+
+This message goes away once ~/.claude/.credentials.json is populated.
+EOF
+  exit 1
+fi
+
 # SELinux hosts (Fedora, RHEL...) need a relabel suffix on bind mounts:
 #   PCLAUDE_RELABEL=z    shared label, lets concurrent sessions share ~/.claude
 #   PCLAUDE_RELABEL=Z    private label, stricter, for one session at a time
