@@ -40,24 +40,17 @@ fish_add_path ~/.local/bin                                    # fish
 echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.bashrc      # bash/zsh
 ```
 
-**3. Log in**, once, on the first run: `pclaude` and follow the browser prompt. The
-credentials land in `~/.claude` on the host, so they survive image rebuilds.
+**3. Log in** once, on the host, with plain `claude /login`. That single login covers
+`pclaude` too, and survives image rebuilds.
 
-> **macOS**: on macOS the direct `pclaude` → `/login` flow can hang on the paste step —
-> bracketed-paste escape sequences leak through the nested TTYs (host terminal → podman
-> machine → container) and mangle the OAuth code, so Enter appears to do nothing the
-> first time and reports an invalid code the second. Log in from a container shell
-> instead, which routes the paste cleanly:
->
-> ```sh
-> pclaude --pclaude-shell
-> claude /login         # paste the code here — this TTY path handles it correctly
-> exit
-> ```
->
-> The credentials land in the mounted `~/.claude` and every subsequent `pclaude` picks
-> them up. Native `claude` on the host is unaffected (it uses the macOS Keychain and
-> coexists with the file-based credentials the container writes).
+Claude Code reads `~/.claude/.credentials.json` on Linux, but on macOS it keeps the token
+in the login Keychain, which the Linux container cannot reach. So on macOS `pclaude`
+mirrors your Keychain login into that file (mode `0600`) on every run. The host stays the
+only place you ever run `/login`; don't log in from inside the container, or the next run
+will overwrite it with the host's copy anyway.
+
+If you authenticate with `ANTHROPIC_API_KEY`, Bedrock or Vertex instead, no login is
+needed at all — those are forwarded from the environment.
 
 ## Usage
 

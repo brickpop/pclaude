@@ -26,6 +26,14 @@ RUN set -eux; \
     rm /tmp/go.tgz /usr/local/go/test /usr/local/go/api -rf; \
     /usr/local/go/bin/go version
 
+ARG WIKI_VERSION=v0.9.0
+RUN mkdir -p /tmp/wiki && cd /tmp/wiki && \
+    curl -fsSL -O https://github.com/agentic-wiki/wiki/releases/download/${WIKI_VERSION}/wiki_linux_amd64.tar.gz && \
+    tar xfz wiki_linux_amd64.tar.gz && \
+    mv ./wiki /usr/local/bin && \
+    cd .. && \
+    rm -Rf /tmp/wiki
+
 ENV NPM_CONFIG_PREFIX=/usr/local/share/npm-global \
     GOPATH=/home/node/go \
     DENO_INSTALL=/home/node/.deno \
@@ -41,10 +49,11 @@ USER node
 RUN curl -fsSL https://bun.sh/install | bash
 RUN curl -fsSL https://deno.land/install.sh | sh -s -- -y
 
+ARG FOUNDRY_VERSION=1.7.1
 # Foundry (forge, cast, anvil, chisel). foundryup keeps a second copy of every
 # binary under versions/; hardlinking them together saves ~220 MB.
 RUN curl -fsSL https://foundry.paradigm.xyz | bash \
-  && /home/node/.foundry/bin/foundryup \
+  && /home/node/.foundry/bin/foundryup --install ${FOUNDRY_VERSION} \
   && for f in /home/node/.foundry/versions/*/*; do \
        if [ -f "$f" ]; then ln -f "$f" "/home/node/.foundry/bin/$(basename "$f")"; fi; \
      done
@@ -54,10 +63,9 @@ ARG CLAUDE_CODE_VERSION=latest
 RUN npm install -g @anthropic-ai/claude-code@${CLAUDE_CODE_VERSION} \
   && npm cache clean --force
 
-RUN forge --version && deno --version && bun --version && go version && claude --version
+RUN forge --version && deno --version && bun --version && go version && claude --version && wiki --version
 
 # The command is exactly what you pass, and defaults to Claude.
 # pclaude bind-mounts each project at its host path and passes a matching --workdir.
 ENTRYPOINT []
 CMD ["claude"]
-
