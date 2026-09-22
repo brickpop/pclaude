@@ -1,4 +1,4 @@
-FROM docker.io/library/node:22-slim
+FROM docker.io/library/node:26-slim
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
       ca-certificates \
@@ -11,6 +11,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       unzip \
       fzf \
       vim \
+      just \
       procps \
   && rm -rf /var/lib/apt/lists/*
 
