@@ -28,9 +28,11 @@ RUN set -eux; \
     /usr/local/go/bin/go version
 
 ARG WIKI_VERSION=v0.9.0
-RUN mkdir -p /tmp/wiki && cd /tmp/wiki && \
-    curl -fsSL -O https://github.com/agentic-wiki/wiki/releases/download/${WIKI_VERSION}/wiki_linux_amd64.tar.gz && \
-    tar xfz wiki_linux_amd64.tar.gz && \
+RUN set -eux; \
+    arch="$(dpkg --print-architecture)"; \
+    mkdir -p /tmp/wiki && cd /tmp/wiki && \
+    curl -fsSL -O "https://github.com/agentic-wiki/wiki/releases/download/${WIKI_VERSION}/wiki_linux_${arch}.tar.gz" && \
+    tar xfz "wiki_linux_${arch}.tar.gz" && \
     mv ./wiki /usr/local/bin && \
     cd .. && \
     rm -Rf /tmp/wiki
