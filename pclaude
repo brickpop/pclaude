@@ -47,6 +47,7 @@ build_image() {
 # keep both in step, and whichever expires later wins. The item name is Claude Code's own
 # (undocumented) one — if it ever changes, this fails as "not logged in".
 KEYCHAIN_ITEM="Claude Code-credentials"
+KEYCHAIN_ACCOUNT="${USER:-$(id -un)}"
 CREDS="$HOME/.claude/.credentials.json"
 
 # Prints the expiry of the credentials JSON on stdin, or 0 if it isn't a usable login.
@@ -66,7 +67,7 @@ creds_expiry() {
 # Fails if neither side holds a usable login.
 sync_credentials() {
   local keychain file k f hex
-  keychain="$(security find-generic-password -s "$KEYCHAIN_ITEM" -a "$USER" -w 2>/dev/null || true)"
+  keychain="$(security find-generic-password -s "$KEYCHAIN_ITEM" -a "$KEYCHAIN_ACCOUNT" -w 2>/dev/null || true)"
   file="$(cat "$CREDS" 2>/dev/null || true)"
   k="$(printf '%s' "$keychain" | creds_expiry)"
   f="$(printf '%s' "$file" | creds_expiry)"
@@ -74,14 +75,19 @@ sync_credentials() {
   if [ "$k" -gt "$f" ]; then
     (umask 077 && printf '%s' "$keychain" >"$CREDS.new") && mv "$CREDS.new" "$CREDS"
   elif [ "$f" -gt "$k" ]; then
-    # `security -i` reads the command from stdin; -X takes the value hex-encoded.
-    hex="$(printf '%s' "$file" | xxd -p | tr -d '\n')"
-    printf 'add-generic-password -U -s "%s" -a "%s" -X %s\n' "$KEYCHAIN_ITEM" "$USER" "$hex" \
-      | security -i >/dev/null 2>&1 \
+    # `security -i` reads the command from stdin; -X takes the value hex-encoded. Its exit
+    # status doesn't reliably reflect the inner command, so read the item back instead.
+    hex="$(printf '%s' "$file" | od -An -v -tx1 | tr -d ' \n')"
+    printf 'add-generic-password -U -s "%s" -a "%s" -X %s\n' "$KEYCHAIN_ITEM" "$KEYCHAIN_ACCOUNT" "$hex" \
+      | security -i >/dev/null 2>&1 || true
+    [ "$(security find-generic-password -s "$KEYCHAIN_ITEM" -a "$KEYCHAIN_ACCOUNT" -w 2>/dev/null)" = "$file" ] \
       || echo "pclaude: could not update the Keychain; host 'claude' may ask you to log in" >&2
   fi
   [ "$k" -gt 0 ] || [ "$f" -gt 0 ]
 }
+
+# Sourcing the launcher (as test.sh does) only loads the functions above.
+(return 0 2>/dev/null) && return
 
 while [ $# -gt 0 ]; do
   case "$1" in

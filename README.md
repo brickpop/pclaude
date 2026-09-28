@@ -177,6 +177,16 @@ Claude Code self-updates inside a running container, but the change is lost when
 exits. Run `pclaude --pclaude-update` now and then to bake in the current release.
 Claude Code installs last in the `Dockerfile`, so bumping it reuses the toolchain layers.
 
+## Development
+
+```sh
+just test
+```
+
+`test.sh` sources `pclaude` for its functions and runs the macOS credential sync against
+a fake `security` command, so your real Keychain is never touched. It needs macOS (it uses
+the real `plutil`) and skips elsewhere.
+
 ## Uninstall
 
 ```sh
