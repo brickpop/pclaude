@@ -44,10 +44,18 @@ echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.bashrc      # bash/zsh
 `pclaude` too, and survives image rebuilds.
 
 Claude Code reads `~/.claude/.credentials.json` on Linux, but on macOS it keeps the token
-in the login Keychain, which the Linux container cannot reach. So on macOS `pclaude`
-mirrors your Keychain login into that file (mode `0600`) on every run. The host stays the
-only place you ever run `/login`; don't log in from inside the container, or the next run
-will overwrite it with the host's copy anyway.
+in the login Keychain (item `Claude Code-credentials`), which the Linux container cannot
+reach. So on macOS `pclaude` keeps the two in sync, before launching and again when the
+container exits: whichever copy expires later wins and overwrites the other. The file is
+written with mode `0600`; the Keychain item is updated in place with `security`.
+
+Syncing both ways matters because every token refresh revokes the previous refresh token.
+If the container refreshes and the Keychain keeps the old copy, both host `claude` and the
+next `pclaude` would be left with a dead login.
+
+To log out everywhere, run `claude /logout` on the host **and** delete
+`~/.claude/.credentials.json`; otherwise the next `pclaude` restores the login into the
+Keychain from the file.
 
 If you authenticate with `ANTHROPIC_API_KEY`, Bedrock or Vertex instead, no login is
 needed at all — those are forwarded from the environment.

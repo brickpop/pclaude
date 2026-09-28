@@ -41,6 +41,48 @@ build_image() {
   podman build -t "$IMAGE" "$@" "$SHARE"
 }
 
+# One login for host and container. On macOS Claude Code keeps its login in the Keychain,
+# which the Linux container cannot reach; there it reads ~/.claude/.credentials.json. Every
+# token refresh revokes the previous refresh token, so a copy that falls behind is dead:
+# keep both in step, and whichever expires later wins. The item name is Claude Code's own
+# (undocumented) one — if it ever changes, this fails as "not logged in".
+KEYCHAIN_ITEM="Claude Code-credentials"
+CREDS="$HOME/.claude/.credentials.json"
+
+# Prints the expiry of the credentials JSON on stdin, or 0 if it isn't a usable login.
+# Secrets only ever travel through stdin, never argv, so they don't show up in `ps`.
+creds_expiry() {
+  local json key expiry
+  json="$(cat)"
+  for key in accessToken refreshToken; do
+    # plutil reports a missing key on stdout, so only its exit status is reliable.
+    printf '%s' "$json" | plutil -extract "claudeAiOauth.$key" raw -o /dev/null - >/dev/null 2>&1 \
+      || { echo 0; return; }
+  done
+  expiry="$(printf '%s' "$json" | plutil -extract claudeAiOauth.expiresAt raw -o - - 2>/dev/null)"
+  case "$expiry" in ''|*[!0-9]*) echo 0 ;; *) echo "$expiry" ;; esac
+}
+
+# Fails if neither side holds a usable login.
+sync_credentials() {
+  local keychain file k f hex
+  keychain="$(security find-generic-password -s "$KEYCHAIN_ITEM" -a "$USER" -w 2>/dev/null || true)"
+  file="$(cat "$CREDS" 2>/dev/null || true)"
+  k="$(printf '%s' "$keychain" | creds_expiry)"
+  f="$(printf '%s' "$file" | creds_expiry)"
+
+  if [ "$k" -gt "$f" ]; then
+    (umask 077 && printf '%s' "$keychain" >"$CREDS.new") && mv "$CREDS.new" "$CREDS"
+  elif [ "$f" -gt "$k" ]; then
+    # `security -i` reads the command from stdin; -X takes the value hex-encoded.
+    hex="$(printf '%s' "$file" | xxd -p | tr -d '\n')"
+    printf 'add-generic-password -U -s "%s" -a "%s" -X %s\n' "$KEYCHAIN_ITEM" "$USER" "$hex" \
+      | security -i >/dev/null 2>&1 \
+      || echo "pclaude: could not update the Keychain; host 'claude' may ask you to log in" >&2
+  fi
+  [ "$k" -gt 0 ] || [ "$f" -gt 0 ]
+}
+
 while [ $# -gt 0 ]; do
   case "$1" in
     --pclaude-help)   usage; exit 0 ;;
@@ -71,20 +113,9 @@ esac
 mkdir -p "$HOME/.claude"
 [ -e "$HOME/.claude.json" ] || echo '{}' > "$HOME/.claude.json"
 
-# One login for host and container. Claude Code reads ~/.claude/.credentials.json on
-# Linux but keeps the token in the login Keychain on macOS, which the container cannot
-# reach — so mirror the host's Keychain login into that file on every run. The host
-# stays the single place you ever run /login.
-if [ "$(uname -s)" = "Darwin" ]; then
-  creds="$HOME/.claude/.credentials.json"
-  if security find-generic-password -s 'Claude Code-credentials' -w >"$creds.new" 2>/dev/null \
-     && [ -s "$creds.new" ]; then
-    chmod 600 "$creds.new"
-    mv "$creds.new" "$creds"
-  else
-    rm -f "$creds.new"
-    [ -s "$creds" ] || die "not logged in — run 'claude /login' on the host, then rerun pclaude"
-  fi
+[ "$(uname -s)" = Darwin ] && MACOS=1 || MACOS=""
+if [ -n "$MACOS" ]; then
+  sync_credentials || die "not logged in — run 'claude /login' on the host, then rerun pclaude"
 fi
 
 # SELinux hosts (Fedora, RHEL...) need a relabel suffix on bind mounts:
@@ -130,9 +161,14 @@ fi
 
 # Name the command explicitly, so any other one can replace it.
 if [ "$MODE" = "shell" ]; then
-  exec podman run "${args[@]}" "$IMAGE" bash "$@"
+  cmd=(bash)
+else
+  cmd=(claude)
+  [ "${PCLAUDE_NO_YOLO:-}" = 1 ] || cmd+=(--dangerously-skip-permissions)
 fi
 
-[ "${PCLAUDE_NO_YOLO:-}" = 1 ] || set -- --dangerously-skip-permissions "$@"
-
-exec podman run "${args[@]}" "$IMAGE" claude "$@"
+# No exec: once the container exits, hand any token it refreshed back to the Keychain.
+status=0
+podman run "${args[@]}" "$IMAGE" "${cmd[@]}" "$@" || status=$?
+if [ -n "$MACOS" ]; then sync_credentials || true; fi
+exit "$status"
