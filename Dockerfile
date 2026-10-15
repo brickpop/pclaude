@@ -27,7 +27,7 @@ RUN set -eux; \
     rm /tmp/go.tgz /usr/local/go/test /usr/local/go/api -rf; \
     /usr/local/go/bin/go version
 
-ARG WIKI_VERSION=v0.9.0
+ARG WIKI_VERSION=v0.10.0
 RUN set -eux; \
     arch="$(dpkg --print-architecture)"; \
     mkdir -p /tmp/wiki && cd /tmp/wiki && \
